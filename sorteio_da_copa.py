@@ -1,13 +1,32 @@
 import pandas as pd
 import random
 
-def realizar_sorteio(df_times):
+def realizar_sorteio(df_times, times_fixos=None):
+    # Se não houver times fixos passados, cria um dicionário vazio
+    if times_fixos is None:
+        times_fixos = {}
+        
     # Cria os 16 grupos de A até P vazios
     grupos = {chr(65 + i): [] for i in range(16)}
     
-    # Sorteia do pote 1 ao pote 4
+    # 1. ALOCAÇÃO PRÉVIA DOS CABEÇAS DE CHAVE FIXOS
+    times_fixados_nomes = []
+    for nome_grupo, sigla_time in times_fixos.items():
+        # Encontra os dados do time na tabela pelo nome (sigla)
+        time_dados = df_times[df_times['TIME'] == sigla_time].to_dict('records')
+        if time_dados:
+            grupos[nome_grupo].append(time_dados[0])
+            times_fixados_nomes.append(sigla_time)
+
+    # 2. INÍCIO DO SORTEIO DO POTE 1 AO 4
     for pote_atual in range(1, 5):
-        times_pote = df_times[df_times['POTE'] == pote_atual].to_dict('records')
+        # Filtra os times do pote atual, MAS REMOVE os times que já foram fixados
+        times_pote = df_times[
+            (df_times['POTE'] == pote_atual) & 
+            (~df_times['TIME'].isin(times_fixados_nomes))
+        ].to_dict('records')
+        
+        # Embaralha as bolinhas que sobraram
         random.shuffle(times_pote)
         
         for time in times_pote:
@@ -17,7 +36,7 @@ def realizar_sorteio(df_times):
             # Tenta encaixar o time nos grupos de A a P
             for nome_grupo, times_no_grupo in grupos.items():
                 
-                # Regra 2: Cada grupo só recebe 1 time de cada pote (respeita a ordem dos potes)
+                # Regra 2: Cada grupo só recebe 1 time de cada pote
                 if len(times_no_grupo) == pote_atual:
                     continue
                 
@@ -26,17 +45,16 @@ def realizar_sorteio(df_times):
                 limite = 2 if confed == 'UEFA' else 1
                 
                 if qtd_mesma_confed >= limite:
-                    continue # Já atingiu o limite dessa confederação no grupo, vai pro próximo
+                    continue # Já atingiu o limite, tenta o próximo grupo
                 
-                # NOVA REGRA: Garantir pelo menos 1 time da UEFA por grupo
+                # Regra de Segurança: Garantir pelo menos 1 time da UEFA por grupo
                 vagas_vazias = 4 - len(times_no_grupo)
                 tem_uefa = any(t['CONFEDERAÇÃO'] == 'UEFA' for t in times_no_grupo)
                 
-                # Se o grupo só tem mais 1 vaga e ainda não tem UEFA, APENAS um time UEFA pode entrar
                 if not tem_uefa and vagas_vazias == 1 and confed != 'UEFA':
                     continue 
                 
-                # Se passou por todas as regras, o time entra no grupo
+                # Passou por todas as regras, o time entra
                 grupos[nome_grupo].append(time)
                 alocado = True
                 break
@@ -45,10 +63,10 @@ def realizar_sorteio(df_times):
             if not alocado:
                 return None 
                 
-    # Validação Final de Segurança: Verifica se TODOS os grupos têm pelo menos 1 UEFA
+    # Validação Final de Segurança
     for times in grupos.values():
         if not any(t['CONFEDERAÇÃO'] == 'UEFA' for t in times):
-            return None # Se algum grupo não tiver UEFA, descarta e tenta de novo
+            return None 
             
     return grupos
 
@@ -61,13 +79,24 @@ def main():
         print("Erro: O arquivo 'times.xlsx' não foi encontrado.")
         return
 
+    # --- CONFIGURAÇÃO DOS PAÍSES SEDE ---
+    # Ex: {'A': 'ESP', 'B': 'POR', 'C': 'MAR'}
+    alocacoes_fixas = {
+        'A': 'ESP', 
+        'D': 'POR',
+        'F': 'MAR',
+        'I': 'ARG',
+        'L': 'PAR',
+        'O': 'URU'
+    }
+
     tentativas = 0
     grupos_sorteados = None
     
-    # Loop de tentativas até achar um sorteio 100% válido
+    # Loop de tentativas até achar um sorteio válido
     while grupos_sorteados is None:
         tentativas += 1
-        grupos_sorteados = realizar_sorteio(df)
+        grupos_sorteados = realizar_sorteio(df, times_fixos=alocacoes_fixas)
         
     print(f"Sorteio concluído com sucesso (após {tentativas} tentativa(s) interna(s)).\n")
     
@@ -76,13 +105,16 @@ def main():
     for nome_grupo, times in grupos_sorteados.items():
         print(f"--- GRUPO {nome_grupo} ---")
         for i, time in enumerate(times):
-            print(f"Pote {i+1}: {time['TIME']} ({time['CONFEDERAÇÃO']})")
+            # Formata a exibição para mostrar se o time foi pré-fixado
+            status = " [PAÍS SEDE]" if time['TIME'] in alocacoes_fixas.values() else ""
+            print(f"Pote {time['POTE']}: {time['TIME']} ({time['CONFEDERAÇÃO']}){status}")
             
             dados_exportacao.append({
                 'Grupo': nome_grupo,
                 'Pote': time['POTE'],
                 'Time': time['TIME'],
-                'Confederação': time['CONFEDERAÇÃO']
+                'Confederação': time['CONFEDERAÇÃO'],
+                'Status': 'Sede' if status else 'Sorteado'
             })
         print()
         
